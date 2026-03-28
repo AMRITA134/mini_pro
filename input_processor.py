@@ -86,8 +86,6 @@ def process_inputs():
     TimetableEntry.query.delete()
     TeachingAssignment.query.delete()
     Subject.query.delete()
-    TeachingAssignment.query.delete() 
-    Subject.query.delete()
     Teacher.query.delete()
     Room.query.delete()
     Class.query.delete()
@@ -295,7 +293,10 @@ def process_inputs():
         
         subject = subject_map.get((cls.id, subject_name))
         if subject is None:
-            subject = Subject(name=subject_name)
+            subject = Subject(
+                name=subject_name,
+                teacher_id=teacher_id if 'teacher_id' in locals() else None
+            )
             db.session.add(subject)
             db.session.flush()
             subject_map[(cls.id, subject_name)] = subject

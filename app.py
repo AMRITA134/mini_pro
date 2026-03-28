@@ -209,9 +209,9 @@ def admin_upload():
        
         from scheduler import generate_timetable,allocate_theory_rooms
         generate_timetable()
-        allocate_theory_rooms()
 
-        allocate_rooms()
+        allocate_rooms()            # floating first
+        allocate_theory_rooms()     # THEN theory fallback
 
         return redirect(url_for("view_floating_timetable"))
 

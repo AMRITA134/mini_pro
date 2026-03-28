@@ -14,8 +14,7 @@ TIME_SLOTS = list(map(normalize_slot, [
 # HELPERS
 # -----------------------------
 def is_lab_subject(subject):
-    return subject and "lab" in subject.name.lower()
-
+    return subject and subject.is_lab
 def is_project_subject(subject):
     return subject and "project" in subject.name.lower()
 
@@ -51,11 +50,13 @@ def subject_daily_count(class_id, subject_id, day):
         day=day
     ).count()
 
+
 # -----------------------------
 # MAIN FUNCTION
 # -----------------------------
 def generate_timetable():
     print("⚡ Generating timetable...")
+    subject_cache = {s.id: s for s in Subject.query.all()}
 
     TimetableEntry.query.delete()
     db.session.commit()
@@ -65,6 +66,9 @@ def generate_timetable():
     for cls in classes:
 
         assignments = TeachingAssignment.query.filter_by(class_id=cls.id).all()
+        if not assignments:
+            print(f"⏭️ Skipping {cls.name} (no teacher mapping)")
+            continue
 
         subject_map = {}
         for a in assignments:
@@ -81,11 +85,13 @@ def generate_timetable():
         if cls.name.startswith("S8"):
 
             for subject_id in subject_map:
-                subject = Subject.query.get(subject_id)
+                subject = subject_cache[subject_id]
 
                 if is_project_subject(subject):
 
                     teachers = subject_map.get(subject_id, [])
+                    if not teachers:
+                        continue
                     teacher_id = teachers[0].teacher_id if teachers else None
 
                     for slot in TIME_SLOTS:
@@ -100,7 +106,10 @@ def generate_timetable():
                         ))
 
                     if cls.id in SUBJECT_REQUIREMENTS:
-                        SUBJECT_REQUIREMENTS[cls.id][subject_id] -= len(TIME_SLOTS)
+                        SUBJECT_REQUIREMENTS[cls.id][subject_id] = max(
+                            0,
+                            SUBJECT_REQUIREMENTS[cls.id][subject_id] - len(TIME_SLOTS)
+                        )
 
                     break
 
@@ -108,8 +117,10 @@ def generate_timetable():
         # STEP 1: SPLIT TASKS (FINAL FIXED)
         # ===============================
         for subject_id, teachers in subject_map.items():
+            if not teachers:
+                continue  
 
-            subject = Subject.query.get(subject_id)
+            subject = subject_cache[subject_id]
 
             # get required hours
             hours = SUBJECT_REQUIREMENTS.get(
@@ -153,23 +164,22 @@ def generate_timetable():
                     })
 
         # ===============================
-        # STEP 2: LABS (FINAL)
+        # STEP 2: LABS (FINAL CLEAN FIX)
         # ===============================
         for lab in lab_tasks:
 
-            remaining = lab["hours"]
+            total_blocks = lab["hours"] // 3
+            blocks_assigned = 0
 
             for day in DAYS:
 
-                if remaining <= 0:
+                if blocks_assigned >= total_blocks:
                     break
 
-                # skip Saturday for non-S8
                 if not cls.name.startswith("S8") and day == "SATURDAY":
                     continue
 
-                # block size (labs consecutive)
-                block = 3 if remaining >= 3 else remaining
+                block = 3
 
                 for i in range(len(TIME_SLOTS) - (block - 1)):
 
@@ -184,19 +194,17 @@ def generate_timetable():
                         continue
 
                     # -----------------------
-                    # SELECT TEACHER (BEST FIT)
+                    # SELECT TEACHER
                     # -----------------------
                     selected_teacher = None
 
                     for t in lab["teacher_ids"]:
 
-                        # teacher clash
                         if any(TimetableEntry.query.filter_by(
                             teacher_id=t, day=day, slot=s).first()
                             for s in slots):
                             continue
 
-                        # 🔥 teacher load limit
                         if teacher_daily_load(t, day) + block > 3:
                             continue
 
@@ -212,13 +220,14 @@ def generate_timetable():
                     rooms = LAB_ROOM_DATA.get((cls.id, lab["subject_id"]), [])
 
                     if not rooms:
+                        print(f"❌ No lab rooms for class {cls.id}, subject {lab['subject_id']}")
                         continue
 
                     if is_room_conflict(day, slots, rooms):
                         continue
 
                     # -----------------------
-                    # ASSIGN LAB
+                    # ASSIGN LAB BLOCK
                     # -----------------------
                     for s in slots:
                         db.session.add(TimetableEntry(
@@ -233,8 +242,8 @@ def generate_timetable():
 
                         subject_count[lab["subject_id"]] = subject_count.get(lab["subject_id"], 0) + 1
 
-                    remaining -= block
-                    break
+                    blocks_assigned += 1
+                    break   # ✅ move to next day
         # ===============================
         # STEP 3: PROJECT BLOCKS (FINAL)
         # ===============================
@@ -387,7 +396,7 @@ def generate_timetable():
         # ===============================
         for day in DAYS:
             for slot in TIME_SLOTS:
-
+        
                 if cls.name.startswith("S8") and day == "SATURDAY":
                     continue
 
@@ -399,11 +408,13 @@ def generate_timetable():
                 candidates = []
 
                 for subject_id, teachers in subject_map.items():
+                    if not teachers:   # ✅ ADD THIS
+                        continue
 
-                    subject = Subject.query.get(subject_id)
+                    subject = subject_cache[subject_id]
 
                     # skip lab + project
-                    if is_lab_subject(subject) or is_project_subject(subject):
+                    if subject.is_lab or is_project_subject(subject):
                         continue
 
                     hours = SUBJECT_REQUIREMENTS.get(cls.id, {}).get(subject_id, 0)
@@ -480,9 +491,109 @@ def generate_timetable():
                         is_lab_hour=False,
                         lab_rooms=None
                     ))
+                    subject_count[subject_id] = subject_count.get(subject_id, 0) + 1
+        # ===============================
+        # STEP 6: RELAX TEACHER LOAD
+        # ===============================
+        for day in DAYS:
+            for slot in TIME_SLOTS:
+
+                if TimetableEntry.query.filter_by(
+                    class_id=cls.id, day=day, slot=slot).first():
+                    continue
+
+                for subject_id, teachers in subject_map.items():
+                    if not teachers:   # ✅ ADD THIS
+                        continue
+
+                    subject = subject_cache[subject_id]
+
+                    if subject.is_lab or is_project_subject(subject):
+                        continue
+
+                    hours = SUBJECT_REQUIREMENTS.get(cls.id, {}).get(subject_id, 0)
+
+                    if subject_count.get(subject_id, 0) >= hours:
+                        continue
+
+                    teacher_id = random.choice(teachers).teacher_id
+
+                    # ❗ skip only teacher clash (NOT load)
+                    if TimetableEntry.query.filter_by(
+                        teacher_id=teacher_id, day=day, slot=slot).first():
+                        continue
+
+                    db.session.add(TimetableEntry(
+                        class_id=cls.id,
+                        subject_id=subject_id,
+                        teacher_id=teacher_id,
+                        day=day,
+                        slot=slot,
+                        is_lab_hour=False,
+                        lab_rooms=None
+                    ))
 
                     subject_count[subject_id] = subject_count.get(subject_id, 0) + 1
+                    break
+        # ===============================
+        # STEP 7: FORCE FILL (SAFE)
+        # ===============================
+        for day in DAYS:
+            for slot in TIME_SLOTS:
 
+                if TimetableEntry.query.filter_by(
+                    class_id=cls.id, day=day, slot=slot).first():
+                    continue
+
+                # 🔥 ADD THIS CHECK
+                if not subject_map:
+                    continue
+
+                subject_items = list(subject_map.items())
+
+                if not subject_items:
+                    continue
+
+                subject_id, teachers = random.choice(subject_items)
+                if subject_cache[subject_id].is_lab:
+                    continue
+                if not teachers:
+                    continue
+
+                assigned = False
+
+                # try all teachers first
+                for t in teachers:
+                    if not TimetableEntry.query.filter_by(
+                        teacher_id=t.teacher_id, day=day, slot=slot
+                    ).first():
+
+                        db.session.add(TimetableEntry(
+                            class_id=cls.id,
+                            subject_id=subject_id,
+                            teacher_id=t.teacher_id,
+                            day=day,
+                            slot=slot,
+                            is_lab_hour=False,
+                            lab_rooms=None
+                        ))
+
+                        assigned = True
+                        subject_count[subject_id] = subject_count.get(subject_id, 0) + 1
+                        break
+
+                # 🔥 LAST fallback (force assign anyway)
+                if not assigned:
+                    db.session.add(TimetableEntry(
+                        class_id=cls.id,
+                        subject_id=subject_id,
+                        teacher_id=teachers[0].teacher_id,
+                        day=day,
+                        slot=slot,
+                        is_lab_hour=False,
+                        lab_rooms=None
+                    ))
+                    subject_count[subject_id] = subject_count.get(subject_id, 0) + 1
     db.session.commit()
     print("✅ Timetable generated!")
 
