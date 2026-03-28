@@ -3,6 +3,42 @@ from models import db, Class, Room, Teacher, Subject, TimetableEntry, User,Teach
 from utils.normalize import normalize_slot, normalize_subject
 SUBJECT_REQUIREMENTS = {}
 PARALLEL_DATA = {}
+LAB_ROOM_DATA = {}
+SUBJECT_TYPE = {}
+
+def load_lab_rooms():
+
+    global LAB_ROOM_DATA
+
+    LAB_ROOM_DATA.clear()
+
+    df = normalize(pd.read_excel("uploads/lab_rooms.xlsx"))
+
+    class_col = get_class_column(df)
+
+    subject_col = "subject" if "subject" in df.columns else "subject_name"
+
+    for _, r in df.iterrows():
+
+        class_name = str(r[class_col]).strip()
+        subject_name = normalize_subject(r[subject_col])
+        rooms = str(r["rooms"]).strip()
+
+        cls = Class.query.filter_by(name=class_name).first()
+        subject = Subject.query.filter_by(name=subject_name).first()
+
+        if subject and subject.is_lab != (SUBJECT_TYPE.get(subject_name) == "lab"):
+            print(f"⚠️ FIXING SUBJECT TYPE: {subject_name}")
+            subject.is_lab = (SUBJECT_TYPE.get(subject_name) == "lab")
+
+        if not cls or not subject:
+            print(f"⚠️ Skipping lab mapping: {class_name} - {subject_name}")
+            continue
+
+        LAB_ROOM_DATA[(cls.id, subject.id)] = rooms.split(",")
+
+    print("✅ LAB ROOM DATA LOADED")
+    print(LAB_ROOM_DATA)  # 🔥 DEBUG
 
 def normalize(df):
     df.columns = (
@@ -45,8 +81,11 @@ def process_inputs():
 
     print("\n========== INPUT PROCESSOR START ==========\n")
     SUBJECT_REQUIREMENTS.clear()
+    LAB_ROOM_DATA.clear()
     PARALLEL_DATA.clear()
     TimetableEntry.query.delete()
+    TeachingAssignment.query.delete()
+    Subject.query.delete()
     TeachingAssignment.query.delete() 
     Subject.query.delete()
     Teacher.query.delete()
@@ -104,7 +143,9 @@ def process_inputs():
 
     df = normalize(pd.read_excel("uploads/class_type.xlsx"))
 
-    subject_type = {
+    global SUBJECT_TYPE
+
+    SUBJECT_TYPE = {
         normalize_subject(r["subject"]): str(r["type"]).lower()
         for _, r in df.iterrows()
     }
@@ -176,10 +217,14 @@ def process_inputs():
 
         subject = Subject.query.filter_by(name=subject_name).first()
 
+        if subject and subject.is_lab != (SUBJECT_TYPE.get(subject_name) == "lab"):
+            print(f"⚠️ FIXING SUBJECT TYPE: {subject_name}")
+            subject.is_lab = (SUBJECT_TYPE.get(subject_name) == "lab")
+
         if not subject:
             subject = Subject(
                 name=subject_name,
-                is_lab=(subject_type.get(subject_name) == "lab"),
+                is_lab=(SUBJECT_TYPE.get(subject_name) == "lab"),
                 teacher_id=teacher.id
             )
             db.session.add(subject)
@@ -187,7 +232,7 @@ def process_inputs():
         else:
             subject.teacher_id = teacher.id
 
-        subject_map[subject_name] = subject
+        subject_map[(cls.id, subject_name)] = subject
         existing_assignment = TeachingAssignment.query.filter_by(
             teacher_id=teacher.id,
             subject_id=subject.id,
@@ -205,6 +250,7 @@ def process_inputs():
             db.session.add(assignment)
 
     db.session.commit()
+    print(f"SUBJECT DEBUG → {subject.name}, is_lab={subject.is_lab}, class={cls.name}")
 
     # SUBJECT REQUIREMENTS
     df = normalize(pd.read_excel("uploads/subject_requirements.xlsx"))
@@ -218,7 +264,7 @@ def process_inputs():
         hours = int(r["periods_per_week"])
 
         cls = class_map.get(class_name)
-        subject = subject_map.get(subject_name)
+        subject = subject_map.get((cls.id, subject_name))
 
         if not cls or not subject:
             continue
@@ -246,13 +292,14 @@ def process_inputs():
 
         PARALLEL_DATA.setdefault(cls.id, [])
 
-        subject = subject_map.get(subject_name)
-
+        
+        subject = subject_map.get((cls.id, subject_name))
         if subject is None:
             subject = Subject(name=subject_name)
             db.session.add(subject)
             db.session.flush()
-            subject_map[subject_name] = subject
+            subject_map[(cls.id, subject_name)] = subject
+            print(f"DEBUG → {subject.name}, is_lab={subject.is_lab}, class={cls.name}")
 
         assignment = TeachingAssignment.query.filter_by(
             subject_id=subject.id,
@@ -298,45 +345,7 @@ def process_inputs():
 
 
     db.session.commit()
+    load_lab_rooms()
 
     print("\n========== INPUT PROCESSOR DONE ==========\n")
 
-def process_lab_rooms():
-
-    import os
-
-    path = "uploads/lab_rooms.xlsx"
-
-    if not os.path.exists(path):
-        print("No lab_rooms.xlsx file found")
-        return
-
-    df = normalize(pd.read_excel(path))
-
-    class_col = get_class_column(df)
-
-    for _, r in df.iterrows():
-
-        class_name = str(r[class_col]).strip()
-        subject_col = "subject" if "subject" in df.columns else "subject_name"
-        subject_name = normalize_subject(r[subject_col])
-        lab_rooms = str(r["rooms"]).strip()
-
-        cls = Class.query.filter_by(name=class_name).first()
-        subject = Subject.query.filter_by(name=subject_name).first()
-
-        if not cls or not subject:
-            continue
-
-        entries = TimetableEntry.query.filter(
-            TimetableEntry.class_id == cls.id,
-            TimetableEntry.subject_id == subject.id,
-            TimetableEntry.is_lab_hour == True
-        ).all()
-
-        for e in entries:
-            e.lab_rooms = lab_rooms
-
-    db.session.commit()
-
-    print("\n========== LAB ROOMS PROCESSED ==========\n")

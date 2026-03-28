@@ -17,7 +17,7 @@ from models import (
     TimetableEntry, CancelledClass, TeachingAssignment,Teacher
 )
 
-from input_processor import process_inputs, process_lab_rooms
+from input_processor import process_inputs
 from allocator import allocate_rooms
 from utils.normalize import normalize_slot
 
@@ -206,10 +206,10 @@ def admin_upload():
             )
 
         process_inputs()
-        process_lab_rooms()
-
-        from scheduler import generate_timetable
+       
+        from scheduler import generate_timetable,allocate_theory_rooms
         generate_timetable()
+        allocate_theory_rooms()
 
         allocate_rooms()
 
@@ -422,10 +422,11 @@ def view_floating_timetable():
             if teacher_name and teacher_name not in existing["teachers"]:
                 existing["teachers"].append(teacher_name)
         else:
-            cell.append({
+           cell.append({
                 "subject": e.subject.name if e.subject else "-",
                 "room": e.room.name if e.room else "-",
                 "lab_rooms": e.lab_rooms,
+                "is_lab": e.is_lab_hour,   # 🔥 ADD THIS
                 "batch": e.batch,
                 "teachers": [teacher_name] if teacher_name else []
             })

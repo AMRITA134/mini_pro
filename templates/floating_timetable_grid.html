@@ -211,9 +211,10 @@
             {% elif day in class_data and slot in class_data[day] %}
               {% set entries = class_data[day][slot] %}
               {% set rooms = entries | map(attribute='room') | list %}
+              {% set is_lab = entries | selectattr('is_lab') | list %}
               {% set lab_rooms = entries | map(attribute='lab_rooms') | select | list %}
 
-              {% if lab_rooms %}
+              {% if is_lab %}
                 <td class="cell-lab">
                   <div class="subject-name">{{ entries | map(attribute='subject') | join(' / ') }}</div>
                   <div class="room-name">( {{ lab_rooms | join(', ') }} )</div>
