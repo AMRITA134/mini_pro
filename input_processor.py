@@ -61,7 +61,7 @@ def get_slot_column(df):
     for c in ["slot", "period", "time", "time_slot"]:
         if c in df.columns:
             return c
-    raise ValueError(f"No slot column found. Columns: {list(df.columns)}")
+    return None   # ✅ DO NOT raise error
 
 def delete_base_entry(class_id, day, slot):
 
@@ -262,7 +262,15 @@ def process_inputs():
         hours = int(r["periods_per_week"])
 
         cls = class_map.get(class_name)
+        if not cls:
+            print(f"❌ Class not found: {class_name}")
+            continue
+        print(f"Processing → Class: {class_name}, Subject: {subject_name}")
         subject = subject_map.get((cls.id, subject_name))
+
+        if not subject:
+            print(f"❌ Subject not found: {subject_name} for class {cls.name}")
+            continue
 
         if not cls or not subject:
             continue
@@ -278,43 +286,81 @@ def process_inputs():
 
     for _, r in df.iterrows():
 
-        cls = class_map.get(str(r[class_col]).strip())
+        # -----------------------
+        # VALIDATE CLASS
+        # -----------------------
+        class_name = str(r.get(class_col, "")).strip()
 
-        if not cls:
+        if not class_name or class_name.lower() == "nan":
+            print(f"❌ Skipping invalid row (class missing): {r}")
             continue
 
-        subject_name = normalize_subject(r["subject"])
-        day = str(r["day"]).strip()
-        slot = normalize_slot(r[slot_col])
-        batch = str(r["batch"]).strip()
+        cls = class_map.get(class_name)
 
+        if not cls:
+            print(f"❌ Class not found: {class_name}")
+            continue
+
+        # -----------------------
+        # VALIDATE SUBJECT
+        # -----------------------
+        subject_name = normalize_subject(r.get("subject", ""))
+
+        if not subject_name:
+            print(f"❌ Missing subject: {r}")
+            continue
+
+        subject = subject_map.get((cls.id, subject_name))
+
+        if not subject:
+            print(f"❌ Subject not mapped: {subject_name} for {class_name}")
+            continue
+
+        # -----------------------
+        # VALIDATE GROUP
+        # -----------------------
+        group_raw = str(r.get("group", "")).strip()
+
+        if not group_raw or group_raw.lower() == "nan":
+            print(f"❌ Missing group: {r}")
+            continue
+
+        try:
+            group = int(group_raw)
+        except:
+            print(f"❌ Invalid group: {group_raw}")
+            continue
+
+        # -----------------------
+        # BATCH
+        # -----------------------
+        batch = str(r.get("batch", "")).strip()
+
+        if not batch:
+            print(f"❌ Missing batch: {r}")
+            continue
+
+        # -----------------------
+        # OPTIONAL DAY / SLOT
+        # -----------------------
+        day = str(r["day"]).strip() if "day" in df.columns else None
+        slot = normalize_slot(r[slot_col]) if slot_col else None
+
+        # -----------------------
+        # STORE
+        # -----------------------
         PARALLEL_DATA.setdefault(cls.id, [])
 
-        
-        subject = subject_map.get((cls.id, subject_name))
-        if subject is None:
-            subject = Subject(
-                name=subject_name,
-                teacher_id=teacher_id if 'teacher_id' in locals() else None
-            )
-            db.session.add(subject)
-            db.session.flush()
-            subject_map[(cls.id, subject_name)] = subject
-            print(f"DEBUG → {subject.name}, is_lab={subject.is_lab}, class={cls.name}")
-
-        assignment = TeachingAssignment.query.filter_by(
-            subject_id=subject.id,
-            class_id=cls.id
-        ).first()
-
-
-        teacher_id = assignment.teacher_id if assignment else None
         PARALLEL_DATA[cls.id].append({
-        "subject_id": subject.id,
-        "day": day,
-        "slot": slot,
-        "batch": batch
-    })
+            "subject_id": subject.id,
+            "day": day,
+            "slot": slot,
+            "batch": batch,
+            "group": group
+        })
+
+        print(f"✅ PARALLEL LOAD → {class_name} | {subject_name} | {batch} | {group}")
+    
 
     df = normalize(pd.read_excel("uploads/student_mapping.xlsx"))
 

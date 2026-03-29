@@ -214,25 +214,63 @@
               {% set is_lab = entries | selectattr('is_lab') | list %}
               {% set lab_rooms = entries | map(attribute='lab_rooms') | select | list %}
 
+              {% set grouped = {} %}
+              {% for e in entries %}
+                {% set _ = grouped.setdefault(e.batch or 'X', []).append(e) %}
+              {% endfor %}
+
               {% if is_lab %}
-                <td class="cell-lab">
-                  <div class="subject-name">{{ entries | map(attribute='subject') | join(' / ') }}</div>
-                  <div class="room-name">( {{ lab_rooms | join(', ') }} )</div>
-                </td>
+              <td class="cell-lab">
+
+                <div class="subject-name">
+                  {% for batch, items in grouped.items() %}
+                    {{ items | map(attribute='subject') | join(' / ') }}
+                    {% if not loop.last %} &nbsp;&nbsp; {% endif %}
+                  {% endfor %}
+                </div>
+
+                <div class="room-name">
+                  {% for batch, items in grouped.items() %}
+                    ( {{ items | map(attribute='lab_rooms') | select | join(', ') }} )
+                    {% if not loop.last %} &nbsp;&nbsp; {% endif %}
+                  {% endfor %}
+                </div>
+
+              </td>
 
               {% elif rooms[0] != '-' %}
-                <td class="cell-allocated">
-                  <div class="subject-name">{{ entries | map(attribute='subject') | join(' / ') }}</div>
-                  <div class="room-name">( {{ entries | map(attribute='room') | join(', ') }} )</div>
-                </td>
+              <td class="cell-allocated">
+
+                <div class="subject-name">
+                  {% for batch, items in grouped.items() %}
+                    {{ items | map(attribute='subject') | join(' / ') }}
+                    {% if not loop.last %} &nbsp;&nbsp; {% endif %}
+                  {% endfor %}
+                </div>
+
+                <div class="room-name">
+                  {% for batch, items in grouped.items() %}
+                    ( {{ items | map(attribute='room') | join(', ') }} )
+                    {% if not loop.last %} &nbsp;&nbsp; {% endif %}
+                  {% endfor %}
+                </div>
+
+              </td>
 
               {% else %}
-                <td class="cell-unallocated">
-                  <div class="subject-name">{{ entries | map(attribute='subject') | join(' / ') }}</div>
-                  <div class="room-name">-</div>
-                </td>
-              {% endif %}
+              <td class="cell-unallocated">
 
+                <div class="subject-name">
+                  {% for batch, items in grouped.items() %}
+                    {{ items | map(attribute='subject') | join(' / ') }}
+                    {% if not loop.last %} &nbsp;&nbsp; {% endif %}
+                  {% endfor %}
+                </div>
+
+                <div class="room-name">-</div>
+
+              </td>
+              {% endif %}
             {% else %}
               <td class="cell-empty">—</td>
             {% endif %}

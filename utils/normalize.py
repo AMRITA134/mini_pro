@@ -43,8 +43,6 @@ def normalize_subject(subject):
     Keeps slashes for parallel detection.
     """
 
-    if subject is None:
-        return None
 
     s = str(subject).strip()
     s = re.sub(r"\s+", " ", s)

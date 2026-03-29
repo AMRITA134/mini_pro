@@ -68,8 +68,20 @@ def allocate_rooms():
 
         cls = Class.query.get(entry.class_id)
 
+        # ✅ ADD THIS BLOCK HERE
+        permanent_room = Room.query.filter_by(
+            owner_class_id=cls.id,
+            is_permanent=True
+        ).first()
+
+        if permanent_room:
+            entry.room_id = permanent_room.id
+            print(f"🏫 Fixed Room | {cls.name} | {entry.day} {slot} | {permanent_room.name}")
+            continue
+
+        # 🔁 ONLY IF NO PERMANENT ROOM → allocate dynamically
         for room in available_rooms:
-            
+                
             if room.capacity < cls.strength:
                 continue
 
